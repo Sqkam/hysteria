@@ -49,8 +49,8 @@ type ListenUDPFunc = func() (net.PacketConn, error)
 func NewUDPHopPacketConn(addr *UDPHopAddr, hopInterval time.Duration, listenUDPFunc ListenUDPFunc) (net.PacketConn, error) {
 	if hopInterval == 0 {
 		hopInterval = defaultHopInterval
-	} else if hopInterval < 5*time.Second {
-		return nil, errors.New("hop interval must be at least 5 seconds")
+	} else if hopInterval < 1*time.Second {
+		return nil, errors.New("hop interval must be at least 1 seconds")
 	}
 	if listenUDPFunc == nil {
 		listenUDPFunc = func() (net.PacketConn, error) {
@@ -87,6 +87,7 @@ func NewUDPHopPacketConn(addr *UDPHopAddr, hopInterval time.Duration, listenUDPF
 }
 
 func (u *udpHopPacketConn) recvLoop(conn net.PacketConn) {
+	time.Sleep(time.Millisecond * 50)
 	for {
 		buf := u.bufPool.Get().([]byte)
 		n, addr, err := conn.ReadFrom(buf)
