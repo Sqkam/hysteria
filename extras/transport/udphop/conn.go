@@ -87,7 +87,6 @@ func NewUDPHopPacketConn(addr *UDPHopAddr, hopInterval time.Duration, listenUDPF
 }
 
 func (u *udpHopPacketConn) recvLoop(conn net.PacketConn) {
-	time.Sleep(time.Millisecond * 50)
 	for {
 		buf := u.bufPool.Get().([]byte)
 		n, addr, err := conn.ReadFrom(buf)
@@ -145,7 +144,12 @@ func (u *udpHopPacketConn) hop() {
 	// set newConn as currentConn,
 	// start recvLoop on newConn.
 	if u.prevConn != nil {
-		_ = u.prevConn.Close() // recvLoop for this conn will exit
+		conn := u.prevConn
+		go func() {
+			time.Sleep(2 * u.HopInterval)
+			conn.Close()
+		}()
+		// recvLoop for this conn will exit
 	}
 	u.prevConn = u.currentConn
 	u.currentConn = newConn
