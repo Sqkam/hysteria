@@ -30,9 +30,10 @@ type udpHopPacketConn struct {
 	readBufferSize  int
 	writeBufferSize int
 
-	recvQueue chan *udpPacket
-	closeChan chan struct{}
-	closed    bool
+	recvQueue  chan *udpPacket
+	closeChan  chan struct{}
+	closed     bool
+	deadConnCh chan net.PacketConn
 
 	bufPool sync.Pool
 }
@@ -76,17 +77,23 @@ func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc Li
 		addrIndex:     rand.Intn(len(addrs)),
 		recvQueue:     make(chan *udpPacket, packetQueueSize),
 		closeChan:     make(chan struct{}),
+		deadConnCh:    make(chan net.PacketConn, packetQueueSize),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return make([]byte, udpBufferSize)
 			},
 		},
 	}
+	go hConn.closeDeadConn()
 	go hConn.recvLoop(curConn)
 	go hConn.hopLoop()
 	return hConn, nil
 }
-
+func (u *udpHopPacketConn) closeDeadConn() {
+	for c := range u.deadConnCh {
+		_ = c.Close()
+	}
+}
 func (u *udpHopPacketConn) recvLoop(conn net.PacketConn) {
 	for {
 		buf := u.bufPool.Get().([]byte)
@@ -148,7 +155,7 @@ func (u *udpHopPacketConn) hop() {
 		conn := u.prevConn
 		go func() {
 			time.Sleep(3 * u.HopInterval)
-			conn.Close()
+			u.deadConnCh <- conn
 		}()
 		// recvLoop for this conn will exit
 	}
@@ -201,6 +208,7 @@ func (u *udpHopPacketConn) Close() error {
 	if u.closed {
 		return nil
 	}
+	close(u.deadConnCh)
 	// Close prevConn and currentConn
 	// Close closeChan to unblock ReadFrom & hopLoop
 	// Set closed flag to true to prevent double close
