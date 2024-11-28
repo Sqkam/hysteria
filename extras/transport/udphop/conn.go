@@ -2,11 +2,13 @@ package udphop
 
 import (
 	"errors"
+	"time"
+
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"syscall"
-	"time"
 )
 
 const (
@@ -18,15 +20,16 @@ const (
 
 type udpHopPacketConn struct {
 	Addr          net.Addr
-	Addrs         []net.Addr
+	v4Addrs       []net.Addr
+	v6Addrs       []net.Addr
 	HopInterval   time.Duration
 	ListenUDPFunc ListenUDPFunc
 
-	connMutex   sync.RWMutex
-	prevConn    net.PacketConn
-	currentConn net.PacketConn
-	addrIndex   int
-
+	connMutex       sync.RWMutex
+	prevConn        net.PacketConn
+	currentConn     net.PacketConn
+	addrIndex       int
+	currentDest     net.Addr
 	readBufferSize  int
 	writeBufferSize int
 
@@ -66,10 +69,21 @@ func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc Li
 	if err != nil {
 		return nil, err
 	}
+	var v4Addrs []net.Addr
+	var v6Addrs []net.Addr
+	for _, addr := range addrs {
 
+		ipAddr := addr.(*net.UDPAddr).IP.String()
+		if strings.Count(ipAddr, ":") > 0 {
+			v6Addrs = append(v6Addrs, addr)
+		} else {
+			v4Addrs = append(v4Addrs, addr)
+		}
+	}
 	hConn := &udpHopPacketConn{
 		Addr:          addr,
-		Addrs:         addrs,
+		v4Addrs:       v4Addrs,
+		v6Addrs:       v6Addrs,
 		HopInterval:   hopInterval,
 		ListenUDPFunc: listenUDPFunc,
 		prevConn:      nil,
@@ -84,15 +98,23 @@ func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc Li
 			},
 		},
 	}
+	hConn.hop()
 	go hConn.closeDeadConn()
 	go hConn.recvLoop(curConn)
 	go hConn.hopLoop()
+
 	return hConn, nil
 }
 func (u *udpHopPacketConn) closeDeadConn() {
+	timer := time.NewTimer(3 * u.HopInterval)
 	for c := range u.deadConnCh {
+		select {
+		case <-timer.C:
+		case <-u.closeChan:
+		}
 		_ = c.Close()
 	}
+	timer.Stop()
 }
 func (u *udpHopPacketConn) recvLoop(conn net.PacketConn) {
 	for {
@@ -120,6 +142,7 @@ func (u *udpHopPacketConn) recvLoop(conn net.PacketConn) {
 }
 
 func (u *udpHopPacketConn) hopLoop() {
+
 	ticker := time.NewTicker(u.HopInterval)
 	defer ticker.Stop()
 	for {
@@ -153,10 +176,7 @@ func (u *udpHopPacketConn) hop() {
 	// start recvLoop on newConn.
 	if u.prevConn != nil {
 		conn := u.prevConn
-		go func() {
-			time.Sleep(3 * u.HopInterval)
-			u.deadConnCh <- conn
-		}()
+		u.deadConnCh <- conn
 		// recvLoop for this conn will exit
 	}
 	u.prevConn = u.currentConn
@@ -170,9 +190,32 @@ func (u *udpHopPacketConn) hop() {
 	}
 	go u.recvLoop(newConn)
 	// Update addrIndex to a new random value
-	u.addrIndex = rand.Intn(len(u.Addrs))
+	if u.hasIpv6() {
+		u.currentDest = u.v6Addrs[rand.Intn(len(u.v6Addrs))]
+	} else {
+		u.currentDest = u.v4Addrs[rand.Intn(len(u.v4Addrs))]
+	}
+
 }
 
+func (u *udpHopPacketConn) hasIpv6() bool {
+	var (
+		addrs []net.Addr
+	)
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+
+		ipAddr := addr.(*net.IPNet).IP.String()
+
+		if strings.Contains(ipAddr, ":") && !strings.HasPrefix("::1", ipAddr) && strings.Index(ipAddr[1:], "f") == -1 {
+			return true
+		}
+	}
+	return false
+}
 func (u *udpHopPacketConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 	for {
 		select {
@@ -199,7 +242,7 @@ func (u *udpHopPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	}
 	// Skip the check for now, always write to the server,
 	// for the same reason as in ReadFrom.
-	return u.currentConn.WriteTo(b, u.Addrs[u.addrIndex])
+	return u.currentConn.WriteTo(b, u.currentDest)
 }
 
 func (u *udpHopPacketConn) Close() error {
@@ -218,7 +261,8 @@ func (u *udpHopPacketConn) Close() error {
 	err := u.currentConn.Close()
 	close(u.closeChan)
 	u.closed = true
-	u.Addrs = nil // For GC
+	u.v4Addrs = nil // For GC
+	u.v6Addrs = nil // For GC
 	return err
 }
 
