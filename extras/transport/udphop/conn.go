@@ -46,7 +46,7 @@ type udpPacket struct {
 
 type ListenUDPFunc = func() (net.PacketConn, error)
 
-func NewUDPHopPacketConn(addr *UDPHopAddr, hopInterval time.Duration, listenUDPFunc ListenUDPFunc) (net.PacketConn, error) {
+func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc ListenUDPFunc) (net.PacketConn, error) {
 	if hopInterval == 0 {
 		hopInterval = defaultHopInterval
 	} else if hopInterval < 1*time.Second {
@@ -57,7 +57,7 @@ func NewUDPHopPacketConn(addr *UDPHopAddr, hopInterval time.Duration, listenUDPF
 			return net.ListenUDP("udp", nil)
 		}
 	}
-	addrs, err := addr.addrs()
+	addrs, err := addr.Addrs()
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +65,7 @@ func NewUDPHopPacketConn(addr *UDPHopAddr, hopInterval time.Duration, listenUDPF
 	if err != nil {
 		return nil, err
 	}
+
 	hConn := &udpHopPacketConn{
 		Addr:          addr,
 		Addrs:         addrs,
@@ -146,7 +147,7 @@ func (u *udpHopPacketConn) hop() {
 	if u.prevConn != nil {
 		conn := u.prevConn
 		go func() {
-			time.Sleep(2 * u.HopInterval)
+			time.Sleep(3 * u.HopInterval)
 			conn.Close()
 		}()
 		// recvLoop for this conn will exit

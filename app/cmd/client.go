@@ -225,16 +225,18 @@ func (c *clientConfig) fillConnFactory(hyConfig *client.Config) error {
 	var newFunc func(addr net.Addr) (net.PacketConn, error)
 	switch strings.ToLower(c.Transport.Type) {
 	case "", "udp":
-		if hyConfig.ServerAddr.Network() == "udphop" {
+		switch hyConfig.ServerAddr.Network() {
+		case "udphop", "udphopx":
 			hopAddr := hyConfig.ServerAddr.(*udphop.UDPHopAddr)
 			newFunc = func(addr net.Addr) (net.PacketConn, error) {
 				return udphop.NewUDPHopPacketConn(hopAddr, c.Transport.UDP.HopInterval, so.ListenUDP)
 			}
-		} else {
+		default:
 			newFunc = func(addr net.Addr) (net.PacketConn, error) {
 				return so.ListenUDP()
 			}
 		}
+
 	default:
 		return configError{Field: "transport.type", Err: errors.New("unsupported transport type")}
 	}
