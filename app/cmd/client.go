@@ -59,6 +59,7 @@ func initClientFlags() {
 
 type clientConfig struct {
 	Server        string                `mapstructure:"server"`
+	Servers       []string              `mapstructure:"servers"`
 	Auth          string                `mapstructure:"auth"`
 	Transport     clientConfigTransport `mapstructure:"transport"`
 	Obfs          clientConfigObfs      `mapstructure:"obfs"`
@@ -186,7 +187,9 @@ func (c *clientConfig) fillServerAddr(hyConfig *client.Config) error {
 	var addr net.Addr
 	var err error
 	host, port, hostPort := parseServerAddrString(c.Server)
-	if !isPortHoppingPort(port) {
+	if len(c.Servers) > 0 {
+		addr, err = udphop.ResolveUDPHopAddrs(host, port, append(c.Servers, host))
+	} else if !isPortHoppingPort(port) {
 		addr, err = net.ResolveUDPAddr("udp", hostPort)
 	} else {
 		addr, err = udphop.ResolveUDPHopAddr(hostPort)
@@ -223,11 +226,12 @@ func (c *clientConfig) fillConnFactory(hyConfig *client.Config) error {
 	}
 	// Inner PacketConn
 	var newFunc func(addr net.Addr) (net.PacketConn, error)
+
 	switch strings.ToLower(c.Transport.Type) {
 	case "", "udp":
 		switch hyConfig.ServerAddr.Network() {
 		case "udphop", "udphopx":
-			hopAddr := hyConfig.ServerAddr.(*udphop.UDPHopAddr)
+			hopAddr := hyConfig.ServerAddr.(udphop.Addrs)
 			newFunc = func(addr net.Addr) (net.PacketConn, error) {
 				return udphop.NewUDPHopPacketConn(hopAddr, c.Transport.UDP.HopInterval, so.ListenUDP)
 			}
