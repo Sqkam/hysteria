@@ -32,11 +32,10 @@ type udpHopPacketConn struct {
 	currentDest     net.Addr
 	readBufferSize  int
 	writeBufferSize int
-
-	recvQueue  chan *udpPacket
-	closeChan  chan struct{}
-	closed     bool
-	deadConnCh chan net.PacketConn
+	recvQueue       chan *udpPacket
+	closeChan       chan struct{}
+	closed          bool
+	deadConnCh      chan net.PacketConn
 
 	bufPool sync.Pool
 }
@@ -190,7 +189,7 @@ func (u *udpHopPacketConn) hop() {
 	}
 	go u.recvLoop(newConn)
 	// Update addrIndex to a new random value
-	if u.hasIpv6() {
+	if hasIpv6() {
 		u.currentDest = u.v6Addrs[rand.Intn(len(u.v6Addrs))]
 	} else {
 		u.currentDest = u.v4Addrs[rand.Intn(len(u.v4Addrs))]
@@ -198,24 +197,6 @@ func (u *udpHopPacketConn) hop() {
 
 }
 
-func (u *udpHopPacketConn) hasIpv6() bool {
-	var (
-		addrs []net.Addr
-	)
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return false
-	}
-	for _, addr := range addrs {
-
-		ipAddr := addr.(*net.IPNet).IP.String()
-
-		if strings.Contains(ipAddr, ":") && !strings.HasPrefix("::1", ipAddr) && strings.Index(ipAddr[1:], "f") == -1 {
-			return true
-		}
-	}
-	return false
-}
 func (u *udpHopPacketConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 	for {
 		select {
@@ -255,11 +236,9 @@ func (u *udpHopPacketConn) Close() error {
 	// Close prevConn and currentConn
 	// Close closeChan to unblock ReadFrom & hopLoop
 	// Set closed flag to true to prevent double close
-	if u.prevConn != nil {
-		_ = u.prevConn.Close()
-	}
-	err := u.currentConn.Close()
 	close(u.closeChan)
+	err := u.currentConn.Close()
+
 	u.closed = true
 	u.v4Addrs = nil // For GC
 	u.v6Addrs = nil // For GC
