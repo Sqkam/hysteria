@@ -25,19 +25,19 @@ type udpHopPacketConn struct {
 	HopInterval   time.Duration
 	ListenUDPFunc ListenUDPFunc
 
-	connMutex       sync.RWMutex
-	prevConn        net.PacketConn
-	currentConn     net.PacketConn
-	addrIndex       int
-	currentDest     net.Addr
-	readBufferSize  int
-	writeBufferSize int
-	recvQueue       chan *udpPacket
-	closeChan       chan struct{}
-	closed          bool
-	deadConnCh      chan net.PacketConn
-
-	bufPool sync.Pool
+	connMutex        sync.RWMutex
+	prevConn         net.PacketConn
+	currentConn      net.PacketConn
+	addrIndex        int
+	currentDest      net.Addr
+	readBufferSize   int
+	writeBufferSize  int
+	recvQueue        chan *udpPacket
+	closeChan        chan struct{}
+	closed           bool
+	deadConnCh       chan net.PacketConn
+	readWaitDuration time.Duration
+	bufPool          sync.Pool
 }
 
 type udpPacket struct {
@@ -80,17 +80,18 @@ func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc Li
 		}
 	}
 	hConn := &udpHopPacketConn{
-		Addr:          addr,
-		v4Addrs:       v4Addrs,
-		v6Addrs:       v6Addrs,
-		HopInterval:   hopInterval,
-		ListenUDPFunc: listenUDPFunc,
-		prevConn:      nil,
-		currentConn:   curConn,
-		addrIndex:     rand.Intn(len(addrs)),
-		recvQueue:     make(chan *udpPacket, packetQueueSize),
-		closeChan:     make(chan struct{}),
-		deadConnCh:    make(chan net.PacketConn, packetQueueSize),
+		Addr:             addr,
+		v4Addrs:          v4Addrs,
+		v6Addrs:          v6Addrs,
+		HopInterval:      hopInterval,
+		ListenUDPFunc:    listenUDPFunc,
+		prevConn:         nil,
+		currentConn:      curConn,
+		addrIndex:        rand.Intn(len(addrs)),
+		recvQueue:        make(chan *udpPacket, packetQueueSize),
+		closeChan:        make(chan struct{}),
+		deadConnCh:       make(chan net.PacketConn, packetQueueSize),
+		readWaitDuration: 3 * hopInterval,
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return make([]byte, udpBufferSize)
@@ -105,7 +106,7 @@ func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc Li
 	return hConn, nil
 }
 func (u *udpHopPacketConn) closeDeadConn() {
-	timer := time.NewTimer(3 * u.HopInterval)
+	timer := time.NewTimer(u.readWaitDuration)
 	for c := range u.deadConnCh {
 		select {
 		case <-timer.C:
@@ -148,6 +149,7 @@ func (u *udpHopPacketConn) hopLoop() {
 		select {
 		case <-ticker.C:
 			u.hop()
+			_ = u.SetCurrentReadDeadline(time.Now().Add(u.readWaitDuration))
 		case <-u.closeChan:
 			return
 		}
@@ -187,6 +189,7 @@ func (u *udpHopPacketConn) hop() {
 	if u.writeBufferSize > 0 {
 		_ = trySetWriteBuffer(u.currentConn, u.writeBufferSize)
 	}
+
 	go u.recvLoop(newConn)
 	// Update addrIndex to a new random value
 	if hasIpv6() {
@@ -266,6 +269,12 @@ func (u *udpHopPacketConn) SetReadDeadline(t time.Time) error {
 	if u.prevConn != nil {
 		_ = u.prevConn.SetReadDeadline(t)
 	}
+	return u.currentConn.SetReadDeadline(t)
+}
+func (u *udpHopPacketConn) SetCurrentReadDeadline(t time.Time) error {
+	u.connMutex.RLock()
+	defer u.connMutex.RUnlock()
+
 	return u.currentConn.SetReadDeadline(t)
 }
 
