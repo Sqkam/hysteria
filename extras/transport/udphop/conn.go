@@ -149,7 +149,7 @@ func (u *udpHopPacketConn) hopLoop() {
 		select {
 		case <-ticker.C:
 			u.hop()
-			_ = u.SetCurrentReadDeadline(time.Now().Add(u.readWaitDuration))
+			_ = u.SetCurrentDeadline(time.Now().Add(u.readWaitDuration))
 		case <-u.closeChan:
 			return
 		}
@@ -271,11 +271,11 @@ func (u *udpHopPacketConn) SetReadDeadline(t time.Time) error {
 	}
 	return u.currentConn.SetReadDeadline(t)
 }
-func (u *udpHopPacketConn) SetCurrentReadDeadline(t time.Time) error {
+func (u *udpHopPacketConn) SetCurrentDeadline(t time.Time) error {
 	u.connMutex.RLock()
 	defer u.connMutex.RUnlock()
 
-	return u.currentConn.SetReadDeadline(t)
+	return u.currentConn.SetDeadline(t)
 }
 
 func (u *udpHopPacketConn) SetWriteDeadline(t time.Time) error {
