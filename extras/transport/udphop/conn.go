@@ -174,8 +174,7 @@ func (u *udpHopPacketConn) hop() {
 	// set newConn as currentConn,
 	// start recvLoop on newConn.
 	if u.prevConn != nil {
-		conn := u.prevConn
-		u.deadConnCh <- conn
+		u.deadConnCh <- u.prevConn
 		// recvLoop for this conn will exit
 	}
 	u.prevConn = u.currentConn
@@ -215,7 +214,7 @@ func (u *udpHopPacketConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) 
 	}
 }
 
-func (u *udpHopPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+func (u *udpHopPacketConn) writeTo(b []byte, addr net.Addr) (n int, err error) {
 	u.connMutex.RLock()
 	defer u.connMutex.RUnlock()
 	if u.closed {
@@ -224,6 +223,17 @@ func (u *udpHopPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	// Skip the check for now, always write to the server,
 	// for the same reason as in ReadFrom.
 	return u.currentConn.WriteTo(b, u.currentDest)
+}
+func (u *udpHopPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+	for range 3 {
+		n, err = u.writeTo(b, addr)
+		if err == nil {
+			return n, err
+		}
+		u.hop()
+	}
+	return n, err
+
 }
 
 func (u *udpHopPacketConn) Close() error {

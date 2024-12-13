@@ -1,4 +1,3 @@
-
 gen:
 	docker rmi sqkam/hysteria:latest || true
 	python hyperbole.py build -r
