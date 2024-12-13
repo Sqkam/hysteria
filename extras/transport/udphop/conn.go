@@ -1,7 +1,10 @@
 package udphop
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	"math/rand"
@@ -105,15 +108,19 @@ func NewUDPHopPacketConn(addr Addrs, hopInterval time.Duration, listenUDPFunc Li
 	return hConn, nil
 }
 func (u *udpHopPacketConn) closeDeadConn() {
-	timer := time.NewTimer(3 * u.HopInterval)
 	for c := range u.deadConnCh {
-		select {
-		case <-timer.C:
-		case <-u.closeChan:
-		}
-		_ = c.Close()
+		c := c
+		go func() {
+			ctx, cancel := context.WithTimeout(context.TODO(), 2*u.HopInterval)
+			defer cancel()
+			select {
+			case <-ctx.Done():
+			case <-u.closeChan:
+			}
+			_ = c.Close()
+		}()
 	}
-	timer.Stop()
+
 }
 func (u *udpHopPacketConn) recvLoop(conn net.PacketConn) {
 	for {
@@ -230,11 +237,29 @@ func (u *udpHopPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 		if err == nil {
 			return n, err
 		}
+		if n != 0 {
+			os.WriteFile("error.txt", []byte(fmt.Sprintf("错了但是n为%v\n", n)), 0644)
+		}
 		u.hop()
 	}
 	return n, err
 
 }
+
+//func (u *udpHopPacketConn) WriteTo2(b []byte, addr net.Addr) (n int, err error) {
+//
+//	wroteN := 0
+//	for range 3 {
+//		n, err = u.writeTo(b[wroteN:], addr)
+//		if err == nil {
+//			return n, err
+//		}
+//		wroteN = wroteN + n
+//		u.hop()
+//	}
+//	return wroteN, err
+//
+//}
 
 func (u *udpHopPacketConn) Close() error {
 	u.connMutex.Lock()
